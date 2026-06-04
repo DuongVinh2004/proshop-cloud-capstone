@@ -1,0 +1,29 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: telegram
+  group_by:
+    - alertname
+    - instance
+    - severity
+  group_wait: 10s
+  group_interval: 30s
+  repeat_interval: 5m
+
+receivers:
+  - name: telegram
+    telegram_configs:
+      - bot_token_file: /etc/alertmanager/bot_token
+        chat_id: 1  # Replace with private Telegram chat ID during deployment
+        send_resolved: true
+        parse_mode: HTML
+        message: |
+          <b>[{{ .Status | toUpper }}] ProShop Capstone Alert</b>
+          {{ range .Alerts }}
+          <b>Alert:</b> {{ .Labels.alertname }}
+          <b>Severity:</b> {{ .Labels.severity }}
+          <b>Instance:</b> {{ .Labels.instance }}
+          <b>Summary:</b> {{ .Annotations.summary }}
+          <b>Description:</b> {{ .Annotations.description }}
+          {{ end }}

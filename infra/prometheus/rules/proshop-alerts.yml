@@ -1,0 +1,32 @@
+groups:
+  - name: proshop-host-alerts
+    rules:
+      - alert: HighCPUUsage
+        expr: (1 - avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[2m]))) * 100 > 85
+        for: 1m
+        labels:
+          severity: critical
+          team: cloud-capstone
+        annotations:
+          summary: "CPU vượt ngưỡng 85% trên {{ $labels.instance }}"
+          description: "CPU usage đang là {{ $value | printf \"%.2f\" }}%. Kiểm tra Grafana và Loki để xác định request bất thường."
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          team: cloud-capstone
+        annotations:
+          summary: "RAM vượt ngưỡng 80% trên {{ $labels.instance }}"
+          description: "RAM usage đang là {{ $value | printf \"%.2f\" }}%."
+
+      - alert: RootDiskAlmostFull
+        expr: (1 - (node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"})) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          team: cloud-capstone
+        annotations:
+          summary: "Disk / vượt 85% trên {{ $labels.instance }}"
+          description: "Root disk usage đang là {{ $value | printf \"%.2f\" }}%."

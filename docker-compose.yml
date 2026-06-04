@@ -1,0 +1,209 @@
+services:
+  mongo:
+    image: mongo:4.4
+    container_name: proshop-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-proshop_root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-change_this_mongo_root_password}
+      MONGO_INITDB_DATABASE: ${MONGO_DATABASE:-proshop}
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - db_net
+    healthcheck:
+      test: ["CMD-SHELL", "mongo --quiet --username $$MONGO_INITDB_ROOT_USERNAME --password $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 }).ok' | grep 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: proshop-backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${PORT:-5000}
+      MONGO_URI: mongodb://${MONGO_ROOT_USERNAME:-proshop_root}:${MONGO_ROOT_PASSWORD:-change_this_mongo_root_password}@mongo:27017/${MONGO_DATABASE:-proshop}?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:-change_this_jwt_secret_at_least_32_chars}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-sb}
+      SERVE_STATIC_FRONTEND: "false"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      mongo:
+        condition: service_healthy
+    expose:
+      - "5000"
+    networks:
+      - app_net
+      - db_net
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: proshop-frontend
+    restart: unless-stopped
+    expose:
+      - "80"
+    networks:
+      - app_net
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: proshop-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      # Enable after issuing certificates and copying proshop.ssl.conf.example to proshop.ssl.conf.
+      - "443:443"
+    volumes:
+      - ./infra/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./infra/certbot/www:/var/www/certbot:ro
+      - ./infra/certbot/conf:/etc/letsencrypt:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - frontend
+      - backend
+      - grafana
+    networks:
+      - app_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: proshop-certbot
+    profiles: ["ssl"]
+    volumes:
+      - ./infra/certbot/www:/var/www/certbot
+      - ./infra/certbot/conf:/etc/letsencrypt
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "certbot certonly --webroot --webroot-path=/var/www/certbot
+      --email admin@${DOMAIN:-example.com} --agree-tos --no-eff-email
+      -d ${DOMAIN:-example.com}"
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: proshop-node-exporter
+    restart: unless-stopped
+    command:
+      - '--path.rootfs=/host'
+    volumes:
+      - /:/host:ro,rslave
+    expose:
+      - "9100"
+    networks:
+      - app_net
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: proshop-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - node-exporter
+      - alertmanager
+    expose:
+      - "9090"
+    networks:
+      - app_net
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: proshop-alertmanager
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-replace_with_telegram_bot_token}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-0}
+    volumes:
+      - ./infra/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    expose:
+      - "9093"
+    networks:
+      - app_net
+
+  loki:
+    image: grafana/loki:2.9.9
+    container_name: proshop-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yml
+    volumes:
+      - ./infra/loki/loki-config.yml:/etc/loki/local-config.yml:ro
+      - loki_data:/loki
+    expose:
+      - "3100"
+    networks:
+      - app_net
+
+  promtail:
+    image: grafana/promtail:2.9.9
+    container_name: proshop-promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./infra/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - nginx_logs:/var/log/nginx:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    networks:
+      - app_net
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: proshop-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change_this_grafana_password}
+      GF_SERVER_ROOT_URL: '%(protocol)s://%(domain)s/grafana/'
+      GF_SERVER_SERVE_FROM_SUB_PATH: 'true'
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+      - loki
+    expose:
+      - "3000"
+    networks:
+      - app_net
+
+volumes:
+  mongo_data:
+  uploads_data:
+  nginx_logs:
+  prometheus_data:
+  alertmanager_data:
+  loki_data:
+  grafana_data:
+
+networks:
+  app_net:
+    driver: bridge
+  db_net:
+    driver: bridge
+    internal: true

@@ -1,0 +1,4 @@
+services:
+  alertmanager:
+    volumes:
+      - ./infra/alertmanager/bot_token:/etc/alertmanager/bot_token:ro
