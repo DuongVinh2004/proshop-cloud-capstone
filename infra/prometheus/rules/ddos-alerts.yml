@@ -1,0 +1,39 @@
+groups:
+  - name: Nginx_DDoS_Alerts
+    rules:
+      # Cảnh báo 1: Lưu lượng HTTP tăng đột biến (Có thể là HTTP Flood)
+      # Giới hạn 50 req/s liên tục trong 1 phút là mốc tương đối trên server nhỏ
+      - alert: NginxHighRequestRate
+        expr: rate(nginx_http_requests_total[1m]) > 50
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cảnh báo DDoS: Nginx High Request Rate"
+          description: "Tốc độ request hiện tại là {{ $value | printf \"%.2f\" }} req/s, vượt mốc nguy hiểm (50 req/s)."
+
+      # Cảnh báo 2: Kết nối đang chờ quá cao (Dấu hiệu Slowloris Attack)
+      - alert: NginxHighActiveConnections
+        expr: nginx_connections_active > 100
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Cảnh báo DDoS: Nginx High Active Connections"
+          description: "Đang có {{ $value }} kết nối active/waiting. Có thể đang bị tấn công Slowloris."
+
+      # Cảnh báo 3: Tỉ lệ rớt kết nối cao (Server cạn kiệt tài nguyên Worker Nginx)
+      # Dropped = Accepted - Handled. Nếu > 0 nghĩa là Nginx từ chối nhận thêm connection.
+      - alert: NginxConnectionsDropped
+        expr: rate(nginx_connections_accepted[1m]) - rate(nginx_connections_handled[1m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cảnh báo DDoS: Nginx Dropping Connections"
+          description: "Nginx đang quá tải và bắt đầu drop connections ({{ $value | printf \"%.2f\" }} drops/s)."
+
+      # LƯU Ý BẢO MẬT:
+      # Không tạo alert theo HTTP status (như 429, 444, 5xx) tại đây
+      # vì metrics stub_status của Nginx không hỗ trợ bóc tách HTTP code.
+      # Để cảnh báo lỗi HTTP, cần sử dụng Loki Ruler.

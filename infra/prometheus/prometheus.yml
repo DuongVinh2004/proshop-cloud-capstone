@@ -22,3 +22,9 @@ scrape_configs:
         labels:
           service: ec2-host
 
+  - job_name: nginx-exporter
+    static_configs:
+      - targets: ['nginx-exporter:9113']
+        labels:
+          service: nginx-edge
+
