@@ -1,0 +1,61 @@
+@startuml
+!theme plain
+skinparam linetype ortho
+skinparam nodesep 60
+skinparam ranksep 60
+skinparam componentStyle rectangle
+skinparam ArrowColor #2d3436
+
+title Kiến trúc Triển khai Đa tầng - ProShop Cloud Capstone
+
+actor "Khách hàng / Kẻ tấn công" as User
+actor "Quản trị viên" as Admin
+
+cloud "Lớp Biên (Edge Network)" {
+  component "AWS CloudFront\n(Global CDN & Anti-DDoS)" as CF #MediumPurple
+}
+
+rectangle "Đám mây AWS (Máy chủ EC2)" as AWS {
+  rectangle "AWS Security Group\n(Chặn mọi cổng trừ 80, 443, 22)" as SG {
+    
+    component "Nginx Reverse Proxy\n(Bọc SSL, Rate Limit, Honeypot 444)" as Nginx #MediumSeaGreen
+    
+    package "Docker Network: app_net" {
+      component "Frontend (ReactJS)" as React #Turquoise
+      component "Backend (Node/Express)" as Express #Khaki
+    }
+    
+    package "Docker Network: db_net" {
+      database "MongoDB\n(Đóng kín 100%)" as Mongo #LightCoral
+    }
+    
+    package "Cụm Giám Sát SOC & Observability" {
+      component "Promtail" as Promtail
+      component "Loki (Log)" as Loki
+      component "Prometheus (Metrics)" as Prometheus
+      component "Grafana Dashboard" as Grafana
+      component "AlertManager" as AlertManager #HotPink
+    }
+  }
+}
+
+' Luồng dữ liệu chính (Nét liền)
+User -down-> CF : HTTPS (Port 443)
+CF -down-> Nginx : Traffic sạch
+Admin .down.> AWS : SSH (Port 22) - Giới hạn IP
+
+Nginx -down-> React : Định tuyến ( / )
+Nginx -down-> Express : Định tuyến ( /api )
+Express -down-> Mongo : Đọc/Ghi dữ liệu
+
+' Luồng giám sát và hệ thống ngầm (Nét đứt)
+Nginx .right.> Grafana : Truy cập ẩn
+Nginx .down.> Promtail : Log JSON
+Promtail .down.> Loki : Đẩy log
+Nginx .down.> Prometheus : Metrics
+Express .down.> Prometheus : Metrics
+
+Loki .down.> Grafana : Hiển thị
+Prometheus .down.> Grafana : Hiển thị
+Prometheus .right.> AlertManager : Kích hoạt Cảnh Báo
+@enduml
