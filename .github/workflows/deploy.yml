@@ -1,0 +1,49 @@
+name: ProShop CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - security-hardening-selected # Chạy khi push code lên nhánh này
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Bước 1: Checkout mã nguồn từ GitHub
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Bước 2: Đồng bộ toàn bộ mã nguồn lên EC2 bằng SCP (Giữ lại các file cấu hình như .env)
+      - name: Copy Files to EC2 via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          source: "."
+          target: "~/apps/proshop"
+          rm: false # Không xóa file cũ để tránh mất file .env cấu hình trên EC2
+
+      # Bước 3: SSH vào EC2 để rebuild và khởi chạy container mới không downtime
+      - name: Build and Restart Containers via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            echo "=== BẮT ĐẦU DEPLOY TRÊN SERVER EC2 ==="
+            cd ~/apps/proshop
+            
+            # Tự động Rebuild và chạy Backend + Frontend mới
+            docker compose up -d --no-deps --build backend frontend
+            
+            # Reload cấu hình Nginx đề phòng có thay đổi proxy
+            docker compose exec -T nginx nginx -s reload
+            
+            # Kiểm tra trạng thái các container sau khi deploy
+            docker compose ps
+            echo "=== DEPLOY THÀNH CÔNG! ==="
